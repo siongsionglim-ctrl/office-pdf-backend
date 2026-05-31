@@ -18,6 +18,8 @@ from reportlab.lib.utils import ImageReader
 from io import BytesIO
 from fastapi import Form
 
+from reportlab.pdfbase.pdfmetrics import stringWidth
+
 APP_NAME = "Office PDF Backend"
 BASE_DIR = Path("/tmp/office_pdf_jobs")
 MAX_FILE_SIZE_MB = 25
@@ -498,7 +500,11 @@ async def edit_text_pdf(
         packet = BytesIO()
         c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
-        text_x = max(0, min(float(x_ratio) * page_width, page_width - 10))
+        lines = cleaned_text.splitlines() or [cleaned_text]
+        max_text_width = max(stringWidth(line, "Helvetica", safe_font_size) for line in lines)
+
+        text_x = float(x_ratio) * page_width
+        text_x = max(0, min(text_x, page_width - max_text_width))
 
         # Flutter y starts from top, PDF text baseline starts from bottom.
         text_y = page_height - (float(y_ratio) * page_height) - safe_font_size
@@ -508,7 +514,7 @@ async def edit_text_pdf(
         c.setFont("Helvetica", safe_font_size)
 
         line_height = safe_font_size * 1.25
-        for line_index, line in enumerate(cleaned_text.splitlines() or [cleaned_text]):
+        for line_index, line in enumerate(lines):
             y = text_y - (line_index * line_height)
             if y < 0:
                 break
