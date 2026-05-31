@@ -370,10 +370,10 @@ async def sign_pdf(
     file: UploadFile = File(...),
     signature: UploadFile = File(...),
     page_number: int = Form(1),
-    x: float = Form(50),
-    y: float = Form(50),
-    width: float = Form(180),
-    height: float = Form(80),
+    x_ratio: float = Form(0.1),
+    y_ratio: float = Form(0.7),
+    width_ratio: float = Form(0.3),
+    height_ratio: float = Form(0.1),
 ):
       if Path(file.filename or "").suffix.lower() != ".pdf":
           raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
@@ -404,17 +404,19 @@ async def sign_pdf(
           packet = BytesIO()
           c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
-          flutter_view_width = 390
-          flutter_view_height = 650
+          target_page = reader.pages[page_number - 1]
+          page_width = float(target_page.mediabox.width)
+          page_height = float(target_page.mediabox.height)
 
-          scale_x = page_width / flutter_view_width
-          scale_y = page_height / flutter_view_height
+          sig_width = width_ratio * page_width
+          sig_height = height_ratio * page_height
 
-          sig_width = max(20, min(width * scale_x, page_width))
-          sig_height = max(10, min(height * scale_y, page_height))
+          sig_x = x_ratio * page_width
 
-          sig_x = max(0, min(x * scale_x, page_width - sig_width))
-          sig_y = page_height - (y * scale_y) - sig_height
+          # Flutter y starts from top, PDF y starts from bottom
+          sig_y = page_height - ((y_ratio * page_height) + sig_height)
+
+          sig_x = max(0, min(sig_x, page_width - sig_width))
           sig_y = max(0, min(sig_y, page_height - sig_height))
 
           c.drawImage(
