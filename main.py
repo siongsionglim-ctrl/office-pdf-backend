@@ -450,3 +450,98 @@ async def sign_pdf(
       except Exception as e:
           shutil.rmtree(job_dir, ignore_errors=True)
           raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/pdf/edit-text")
+async def edit_text_pdf(
+    file: UploadFile = File(...),
+    page_number: int = Form(1),
+    text: str = Form(...),
+    x_ratio: float = Form(0.1),
+    y_ratio: float = Form(0.1),
+    font_size: float = Form(18),
+):
+    if Path(file.filename or "").suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    cleaned_text = (text or "").strip()
+    if not cleaned_text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = BASE_DIR / job_id
+    input_dir = job_dir / "input"
+    output_dir = job_dir / "output"
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_pdf = input_dir / "input.pdf"
+    output_pdf = output_dir / "edited.pdf"
+
+    try:
+        input_pdf.write_bytes(await file.read())
+
+        reader = PdfReader(str(input_pdf))
+        writer = PdfWriter()
+
+        if len(reader.pages) == 0:
+            raise HTTPException(status_code=400, detail="PDF has no pages.")
+
+        safe_page_number = max(1, min(int(page_number), len(reader.pages)))
+        target_page = reader.pages[safe_page_number - 1]
+
+        page_width = float(target_page.mediabox.width)
+        page_height = float(target_page.mediabox.height)
+
+        safe_font_size = max(6, min(float(font_size), 96))
+
+        packet = BytesIO()
+        c = canvas.Canvas(packet, pagesize=(page_width, page_height))
+
+        text_x = max(0, min(float(x_ratio) * page_width, page_width - 10))
+
+        # Flutter y starts from top, PDF text baseline starts from bottom.
+        text_y = page_height - (float(y_ratio) * page_height) - safe_font_size
+        text_y = max(0, min(text_y, page_height - safe_font_size))
+
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica", safe_font_size)
+
+        line_height = safe_font_size * 1.25
+        for line_index, line in enumerate(cleaned_text.splitlines() or [cleaned_text]):
+            y = text_y - (line_index * line_height)
+            if y < 0:
+                break
+            c.drawString(text_x, y, line)
+
+        c.save()
+
+        packet.seek(0)
+        overlay_pdf = PdfReader(packet)
+        overlay_page = overlay_pdf.pages[0]
+
+        for index, page in enumerate(reader.pages):
+            if index == safe_page_number - 1:
+                page.merge_page(overlay_page)
+            writer.add_page(page)
+
+        with output_pdf.open("wb") as f:
+            writer.write(f)
+
+        writer.close()
+
+        (job_dir / "meta.txt").write_text(str(time.time()), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "download_url": f"/job/{job_id}/download",
+        }
+
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except Exception as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
