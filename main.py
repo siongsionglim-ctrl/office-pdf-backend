@@ -10,6 +10,9 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from typing import List
+from pypdf import PdfReader, PdfWriter
+
 APP_NAME = "Office PDF Backend"
 BASE_DIR = Path("/tmp/office_pdf_jobs")
 MAX_FILE_SIZE_MB = 25
@@ -108,6 +111,151 @@ async def convert_office_to_pdf(file: UploadFile = File(...)):
             "job_id": job_id,
             "download_url": f"/job/{job_id}/download",
             "expires_in_seconds": JOB_EXPIRE_SECONDS,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.post("/pdf/merge")
+async def merge_pdfs(files: List[UploadFile] = File(...)):
+    if len(files) < 2:
+        raise HTTPException(status_code=400, detail="Please upload at least 2 PDF files.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = BASE_DIR / job_id
+    input_dir = job_dir / "input"
+    output_dir = job_dir / "output"
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        writer = PdfWriter()
+        total_size = 0
+        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+
+        for index, upload in enumerate(files):
+            ext = Path(upload.filename or "").suffix.lower()
+            if ext != ".pdf":
+                raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+            input_path = input_dir / f"input_{index}.pdf"
+
+            with input_path.open("wb") as buffer:
+                while True:
+                    chunk = await upload.read(1024 * 1024)
+                    if not chunk:
+                        break
+
+                    total_size += len(chunk)
+                    if total_size > max_bytes:
+                        shutil.rmtree(job_dir, ignore_errors=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Total files too large. Max {MAX_FILE_SIZE_MB}MB.",
+                        )
+
+                    buffer.write(chunk)
+
+            writer.append(str(input_path))
+
+        output_path = output_dir / "merged.pdf"
+
+        with output_path.open("wb") as f:
+            writer.write(f)
+
+        writer.close()
+
+        (job_dir / "meta.txt").write_text(str(time.time()), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "download_url": f"/job/{job_id}/download",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/pdf/compress")
+async def compress_pdf(file: UploadFile = File(...)):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = BASE_DIR / job_id
+    input_dir = job_dir / "input"
+    output_dir = job_dir / "output"
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = input_dir / "input.pdf"
+    output_path = output_dir / "compressed.pdf"
+
+    try:
+        total_size = 0
+        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+
+        with input_path.open("wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+                if total_size > max_bytes:
+                    shutil.rmtree(job_dir, ignore_errors=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Max {MAX_FILE_SIZE_MB}MB.",
+                    )
+
+                buffer.write(chunk)
+
+        reader = PdfReader(str(input_path))
+        writer = PdfWriter()
+
+        for page in reader.pages:
+            try:
+                page.compress_content_streams()
+            except Exception:
+                pass
+            writer.add_page(page)
+
+        try:
+            writer.compress_identical_objects(
+                remove_duplicates=True,
+                remove_unreferenced=True,
+            )
+        except Exception:
+            pass
+
+        with output_path.open("wb") as f:
+            writer.write(f)
+
+        writer.close()
+
+        (job_dir / "meta.txt").write_text(str(time.time()), encoding="utf-8")
+
+        original_size = input_path.stat().st_size
+        compressed_size = output_path.stat().st_size
+
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "download_url": f"/job/{job_id}/download",
+            "original_size": original_size,
+            "compressed_size": compressed_size,
         }
 
     except HTTPException:
