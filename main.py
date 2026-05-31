@@ -501,14 +501,34 @@ async def edit_text_pdf(
         c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
         lines = cleaned_text.splitlines() or [cleaned_text]
-        max_text_width = max(stringWidth(line, "Helvetica", safe_font_size) for line in lines)
 
-        text_x = float(x_ratio) * page_width
-        text_x = max(0, min(text_x, page_width - max_text_width))
+        max_text_width = max(
+            stringWidth(line, "Helvetica", safe_font_size)
+            for line in lines
+        )
 
-        # Flutter y starts from top, PDF text baseline starts from bottom.
-        text_y = page_height - (float(y_ratio) * page_height) - safe_font_size
-        text_y = max(0, min(text_y, page_height - safe_font_size))
+        # CENTER X
+        center_x = float(x_ratio) * page_width
+        text_x = center_x - (max_text_width / 2)
+
+        text_x = max(
+            0,
+            min(text_x, page_width - max_text_width)
+        )
+
+        # CENTER Y
+        center_y_from_top = float(y_ratio) * page_height
+
+        text_y = (
+            page_height
+            - center_y_from_top
+            - (safe_font_size / 2)
+        )
+
+        text_y = max(
+            0,
+            min(text_y, page_height - safe_font_size)
+        )
 
         c.setFillColorRGB(0, 0, 0)
         c.setFont("Helvetica", safe_font_size)
