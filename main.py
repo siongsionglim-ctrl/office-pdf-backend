@@ -397,16 +397,12 @@ async def sign_pdf(
           reader = PdfReader(str(input_pdf))
           writer = PdfWriter()
 
-          first_page = reader.pages[0]
-          page_width = float(first_page.mediabox.width)
-          page_height = float(first_page.mediabox.height)
-
-          packet = BytesIO()
-          c = canvas.Canvas(packet, pagesize=(page_width, page_height))
-
           target_page = reader.pages[page_number - 1]
           page_width = float(target_page.mediabox.width)
           page_height = float(target_page.mediabox.height)
+
+          packet = BytesIO()
+          c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
           sig_width = width_ratio * page_width
           sig_height = height_ratio * page_height
