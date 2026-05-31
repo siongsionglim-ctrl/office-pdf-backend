@@ -16,6 +16,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from io import BytesIO
+from fastapi import Form
 
 APP_NAME = "Office PDF Backend"
 BASE_DIR = Path("/tmp/office_pdf_jobs")
@@ -366,9 +367,14 @@ def cleanup_expired_jobs():
 
 @app.post("/pdf/sign")
 async def sign_pdf(
-      file: UploadFile = File(...),
-      signature: UploadFile = File(...),
-  ):
+    file: UploadFile = File(...),
+    signature: UploadFile = File(...),
+    page_number: int = Form(1),
+    x: float = Form(50),
+    y: float = Form(50),
+    width: float = Form(180),
+    height: float = Form(80),
+):
       if Path(file.filename or "").suffix.lower() != ".pdf":
           raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
@@ -398,19 +404,21 @@ async def sign_pdf(
           packet = BytesIO()
           c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
-          sig_width = 180
-          sig_height = 80
-          x = page_width - sig_width - 50
-          y = 60
+          sig_width = max(20, min(width, page_width))
+          sig_height = max(10, min(height, page_height))
+
+          sig_x = max(0, min(x, page_width - sig_width))
+          sig_y = page_height - y - sig_height
+          sig_y = max(0, min(sig_y, page_height - sig_height))
 
           c.drawImage(
-              ImageReader(str(signature_png)),
-              x,
-              y,
-              width=sig_width,
-              height=sig_height,
-              mask="auto",
-          )
+                ImageReader(str(signature_png)),
+                sig_x,
+                sig_y,
+                width=sig_width,
+                height=sig_height,
+                mask="auto",
+            )
           c.save()
 
           packet.seek(0)
@@ -418,8 +426,8 @@ async def sign_pdf(
           overlay_page = overlay_pdf.pages[0]
 
           for index, page in enumerate(reader.pages):
-              if index == 0:
-                  page.merge_page(overlay_page)
+              if index == page_number - 1:
+                    page.merge_page(overlay_page)
               writer.add_page(page)
 
           with output_pdf.open("wb") as f:
