@@ -13,6 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pypdf import PdfReader, PdfWriter
 
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from io import BytesIO
+
 APP_NAME = "Office PDF Backend"
 BASE_DIR = Path("/tmp/office_pdf_jobs")
 MAX_FILE_SIZE_MB = 25
@@ -359,3 +363,78 @@ def cleanup_expired_jobs():
 
         except Exception:
             shutil.rmtree(job_dir, ignore_errors=True)
+
+@app.post("/pdf/sign")
+async def sign_pdf(
+      file: UploadFile = File(...),
+      signature: UploadFile = File(...),
+  ):
+      if Path(file.filename or "").suffix.lower() != ".pdf":
+          raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+      job_id = uuid.uuid4().hex
+      job_dir = BASE_DIR / job_id
+      input_dir = job_dir / "input"
+      output_dir = job_dir / "output"
+
+      input_dir.mkdir(parents=True, exist_ok=True)
+      output_dir.mkdir(parents=True, exist_ok=True)
+
+      input_pdf = input_dir / "input.pdf"
+      signature_png = input_dir / "signature.png"
+      output_pdf = output_dir / "signed.pdf"
+
+      try:
+          input_pdf.write_bytes(await file.read())
+          signature_png.write_bytes(await signature.read())
+
+          reader = PdfReader(str(input_pdf))
+          writer = PdfWriter()
+
+          first_page = reader.pages[0]
+          page_width = float(first_page.mediabox.width)
+          page_height = float(first_page.mediabox.height)
+
+          packet = BytesIO()
+          c = canvas.Canvas(packet, pagesize=(page_width, page_height))
+
+          sig_width = 180
+          sig_height = 80
+          x = page_width - sig_width - 50
+          y = 60
+
+          c.drawImage(
+              ImageReader(str(signature_png)),
+              x,
+              y,
+              width=sig_width,
+              height=sig_height,
+              mask="auto",
+          )
+          c.save()
+
+          packet.seek(0)
+          overlay_pdf = PdfReader(packet)
+          overlay_page = overlay_pdf.pages[0]
+
+          for index, page in enumerate(reader.pages):
+              if index == 0:
+                  page.merge_page(overlay_page)
+              writer.add_page(page)
+
+          with output_pdf.open("wb") as f:
+              writer.write(f)
+
+          writer.close()
+
+          (job_dir / "meta.txt").write_text(str(time.time()), encoding="utf-8")
+
+          return {
+              "ok": True,
+              "job_id": job_id,
+              "download_url": f"/job/{job_id}/download",
+          }
+
+      except Exception as e:
+          shutil.rmtree(job_dir, ignore_errors=True)
+          raise HTTPException(status_code=500, detail=str(e))
