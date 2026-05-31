@@ -404,11 +404,17 @@ async def sign_pdf(
           packet = BytesIO()
           c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
-          sig_width = max(20, min(width, page_width))
-          sig_height = max(10, min(height, page_height))
+          flutter_view_width = 390
+          flutter_view_height = 650
 
-          sig_x = max(0, min(x, page_width - sig_width))
-          sig_y = page_height - y - sig_height
+          scale_x = page_width / flutter_view_width
+          scale_y = page_height / flutter_view_height
+
+          sig_width = max(20, min(width * scale_x, page_width))
+          sig_height = max(10, min(height * scale_y, page_height))
+
+          sig_x = max(0, min(x * scale_x, page_width - sig_width))
+          sig_y = page_height - (y * scale_y) - sig_height
           sig_y = max(0, min(sig_y, page_height - sig_height))
 
           c.drawImage(
